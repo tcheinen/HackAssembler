@@ -3,12 +3,11 @@ package com.teddyheinen
 import java.io.File
 
 
-
 fun main(args: Array<String>) {
     File("asm/").walkTopDown().filter { it.extension == "asm" }.forEach {
+        println("Assembling ${it.name}")
         val (generatedCode: List<String>, debugASM: List<String>) = assemble(it)
         File("asm/${it.nameWithoutExtension}.hack").writeText(generatedCode.joinToString("\n"))
-
 
         // Everything in the main function below this point is automated testing code
         val reference = File("asm/${it.nameWithoutExtension}_reference.hack").readLines()
@@ -64,6 +63,11 @@ fun assemble(f: File): Pair<List<String>, List<String>> {
  */
 fun labelize(code: List<String>): Pair<List<String>, Map<String, Int>> {
 
+    /**
+     * Should be a fairly straightforward function
+     * It will iterate over each line and strip any label instructions after storing the line number
+     */
+
     val labelRegex = "\\(.*\\)".toRegex()
     val labels: MutableMap<String, Int> = mutableMapOf()
 
@@ -89,6 +93,17 @@ fun labelize(code: List<String>): Pair<List<String>, Map<String, Int>> {
  * @return Compiled Hack binary in a list of strings
  */
 fun processInstructions(code: List<String>, labels: Map<String, Int>): List<String> {
+
+    /**
+     * I actually rather like how this turned out
+     * First, any instructions which starts with @ is an A instruction.  The remainder of the instruction is passed through
+     * the symbol function and then converted into base 2
+     * If it isn't an A instruction we can assume it is a C instruction.  First, I split the instruction into three segments
+     * Each segment is considered separately.  dest and jmp are both easily done programmatically.  I check for a couple
+     * conditions and set bits as required. The comp instruction is a bit more of a hassle, I ended up just writing a function
+     * to map comp instructions to the appropriate bitstrings
+     */
+
     val code_1: MutableList<String> = mutableListOf()
     val variables: MutableMap<String, Int> = mutableMapOf()
 
@@ -96,7 +111,7 @@ fun processInstructions(code: List<String>, labels: Map<String, Int>): List<Stri
         var instruction = ""
         if (i.get(0) == "@".single()) {
             // A Instruction
-            val num = (symbol(i.slice(1..i.length - 1), labels, variables).toInt() and 0x7fff).toString(2)
+            val num = symbol(i.slice(1..i.length - 1), labels, variables).toInt().toString(2)
             instruction = "0${num.padStart(15, "0".single())}"
         } else {
             // C Instruction
@@ -105,9 +120,9 @@ fun processInstructions(code: List<String>, labels: Map<String, Int>): List<Stri
             val splitDest = instr.split("=")
             val splitJmp = instr.split(";")
 
-            val dest = if(splitDest.size > 1) splitDest.first() else ""
+            val dest = if (splitDest.size > 1) splitDest.first() else ""
             val comp = instr.split("=").last().split(";").first()
-            val jmp = if(splitJmp.size > 1) splitJmp.last() else ""
+            val jmp = if (splitJmp.size > 1) splitJmp.last() else ""
 
             val destA = dest.contains("a")
             val destD = dest.contains("d")
@@ -130,42 +145,56 @@ fun processInstructions(code: List<String>, labels: Map<String, Int>): List<Stri
 
 /**
  * Converts symbols into their integer representation
- * @param sym The com.teddyheinen.symbol to be converted
+ * @param sym The symbol to be converted
  * @param labels A mapping of label <-> line number
  * @param variables A mapping of variables to their memory locations
- * @return The integer which the com.teddyheinen.symbol corresponds to
+ * @return The integer which the symbol corresponds to
  */
 fun symbol(sym: String, labels: Map<String, Int>, variables: MutableMap<String, Int>): String {
 
-    if ((sym.toIntOrNull() == null)) {
-        if (sym.get(0) == "R".single() && sym.slice(1..sym.length - 1).toIntOrNull() != null) {
+    /**
+     * this is kinda a mess but i'm not sure of a better way to do it.  I'll outline the workflow below
+     * 1. Any symbol that is a valid integer will be returned without any modification
+     * 2. Any symbol in which the first character is an R and the remaining characters map to an integer between 0 and 16
+     * will return that number
+     * 3. Any symbol which corresponds to a constant will return the appropriate number for that constant
+     * 4. Any remaining symbol is either a label or a variable.  If a label can be found it will return the stored line number
+     * otherwise it will return the stored memory location of the variable or assign a new one if it is the first occurence
+     */
+
+    if ((sym.toIntOrNull() != null)) return sym.toIntOrNull().toString()
+
+    if (sym.get(0) == "R".single()) {
+        val remainder = sym.slice(1..sym.length - 1)
+        if (remainder.toIntOrNull() != null && remainder.toInt() in 0..17) {
             return "${sym.slice(1..sym.length - 1)}"
         }
-        val symbol = when (sym) {
-            "SP" -> "0"
-            "LCL" -> "1"
-            "ARG" -> "2"
-            "THIS" -> "3"
-            "THAT" -> "4"
-            "SCREEN" -> "16384"
-            "KBD" -> "24576"
-            else -> null
-        }
-        if (symbol != null) return symbol
-        if (labels.get(sym) != null) {
-            return labels.get(sym)!!.toString()
-        } else {
-            if (sym !in variables) variables.put(sym, 16 + variables.size)
-            return "${variables.get(sym)}"
-        }
-
     }
-    return sym.toIntOrNull().toString()
+
+    val constant = when (sym) {
+        "SP" -> "0"
+        "LCL" -> "1"
+        "ARG" -> "2"
+        "THIS" -> "3"
+        "THAT" -> "4"
+        "SCREEN" -> "16384"
+        "KBD" -> "24576"
+        else -> null
+    }
+    if (constant != null) return constant
+
+    if (labels.get(sym) != null) {
+        return labels.get(sym)!!.toString()
+    } else {
+        if (sym !in variables) variables.put(sym, 16 + variables.size)
+        return "${variables.get(sym)}"
+    }
+
 }
 
 
 /**
- * Converts com.teddyheinen.comp instructions into their binary representation
+ * Converts comp instructions into their binary representation
  * @param comp Comp instruction such as D+1 or M-D
  * @return Binary representation of the instruction
  */
@@ -202,6 +231,6 @@ fun comp(comp: String): String {
         "d&m" -> "1000000"
         "d|a" -> "0010101"
         "d|m" -> "1010101"
-        else -> throw Exception("${comp} is not a valid com.teddyheinen.comp instruction")
+        else -> throw Exception("${comp} is not a valid comp instruction")
     }
 }
