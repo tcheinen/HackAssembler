@@ -1,23 +1,23 @@
+package com.teddyheinen
+
 import java.io.File
+
 
 
 fun main(args: Array<String>) {
     File("asm/").walkTopDown().filter { it.extension == "asm" }.forEach {
-        val generatedCode: String = assemble(it)
-        val out: File = File("asm/${it.nameWithoutExtension}.hack")
-        out.writeText(generatedCode)
-        val refText = File("asm/${it.nameWithoutExtension}_reference.hack").readLines()
-        val createdText = out.readLines()
-        val cleanAsm = clean(it)
-        if (refText.size == createdText.size) {
-            refText.forEachIndexed { index, line ->
-                if (refText[index] != createdText[index]) {
-                    val lines: MutableList<String> = mutableListOf<String>()
-                    for (i in -3..3) {
-                        lines.add(cleanAsm[index + i])
-                    }
+        val (generatedCode: List<String>, debugASM: List<String>) = assemble(it)
+        File("asm/${it.nameWithoutExtension}.hack").writeText(generatedCode.joinToString("\n"))
+
+
+        // Everything in the main function below this point is automated testing code
+        val reference = File("asm/${it.nameWithoutExtension}_reference.hack").readLines()
+        if (reference.size == generatedCode.size) {
+            reference.forEachIndexed { index, line ->
+                if (reference[index] != generatedCode[index]) {
+                    val debugLines: List<String> = (-3..3).map { debugASM[index + it] }
                     throw Exception(
-                        "Reference and generated code different at line ${index}\nLine in ASM: ${cleanAsm[index]} \n${lines.joinToString(
+                        "Reference and generated code different at line ${index}\nLine in ASM: ${debugASM[index]} \n${debugLines.joinToString(
                             "\n"
                         )}"
                     )
@@ -30,29 +30,35 @@ fun main(args: Array<String>) {
 
 }
 
-fun clean(f: File): List<String> {
+/**
+ * Strips whitespace or comments from a list of assembly instructions
+ * @param f Lines in a Hack ASM file
+ * @return Hack ASM lines with any whitespace or comments removed
+ */
+fun clean(f: List<String>): List<String> {
     val commentRegex = "\\/\\/.*\$".toRegex()
-    val labelRegex = "\\(.*\\)".toRegex()
 
-
-    return f.readLines().map { it.replace(commentRegex, "") }.map { it.replace("\\s".toRegex(), "") }
-        .filter { !it.equals("") }.filter { it.matches(labelRegex) != null }
+    return f.map { it.replace(commentRegex, "") }.map { it.replace("\\s".toRegex(), "") }
+        .filter { !it.equals("") }
 
 }
 
-fun assemble(f: File): String {
-    val commentRegex = "\\/\\/.*\$".toRegex()
-
-    val code: List<String> = f.readLines().map { it.replace(commentRegex, "") }.map { it.replace("\\s".toRegex(), "") }
-        .filter { !it.equals("") }
+/**
+ * Reads a file object and returns assembled code
+ * @param f File object pointing to the ASM file to be assembled
+ * @return A pair containing the binary output and the cleaned ASM
+ */
+fun assemble(f: File): Pair<List<String>, List<String>> {
+    val code: List<String> = clean(f.readLines())
     val (codeProcessedLabels, labels) = labelize(code)
     val codeProcessedInstructions = processInstructions(codeProcessedLabels, labels)
-    return codeProcessedInstructions.joinToString("\n")
+    return Pair(codeProcessedInstructions, code)
 }
 
 
 /**
- * Labelize
+ * Reads in a list of assembly instruction and returns a copy without labels and a label mapping\n
+ * corresponds to phase 1 of the provided assembler process
  * @param code A list containing the string value of each line of a Hack ASM file
  * @return A list of strings with any label instructions and a label <-> line number mapping
  */
@@ -75,6 +81,13 @@ fun labelize(code: List<String>): Pair<List<String>, Map<String, Int>> {
     return Pair(code_1, labels)
 }
 
+/**
+ * Reads in a list of assembly instruction and returns a list of binary instructions\n
+ * corresponds to phase 2 of the provided assembler process
+ * @param code List of ASM instructions
+ * @param labels Label <-> Line number mapping
+ * @return Compiled Hack binary in a list of strings
+ */
 fun processInstructions(code: List<String>, labels: Map<String, Int>): List<String> {
     val code_1: MutableList<String> = mutableListOf()
     val variables: MutableMap<String, Int> = mutableMapOf()
@@ -87,7 +100,14 @@ fun processInstructions(code: List<String>, labels: Map<String, Int>): List<Stri
             instruction = "0${num.padStart(15, "0".single())}"
         } else {
             // C Instruction
-            val (dest, comp, jmp) = splitCInstruction(i.toLowerCase())
+            val instr = i.toLowerCase()
+
+            val splitDest = instr.split("=")
+            val splitJmp = instr.split(";")
+
+            val dest = if(splitDest.size > 1) splitDest.first() else ""
+            val comp = instr.split("=").last().split(";").first()
+            val jmp = if(splitJmp.size > 1) splitJmp.last() else ""
 
             val destA = dest.contains("a")
             val destD = dest.contains("d")
@@ -107,27 +127,14 @@ fun processInstructions(code: List<String>, labels: Map<String, Int>): List<Stri
     return code_1
 }
 
-fun splitCInstruction(instr: String): List<String> {
-    var dest = ""
-    var cmp = ""
-    var jmp = ""
 
-    val splitAtDest = instr.split("=")
-    if (splitAtDest.size > 1) {
-        dest = splitAtDest.first()
-    }
-
-    cmp = instr.split("=").last().split(";").first()
-
-
-    val splitAtJmp = instr.split(";")
-    if (splitAtJmp.size > 1) {
-        jmp = splitAtJmp.last()
-    }
-
-    return listOf(dest, cmp, jmp)
-}
-
+/**
+ * Converts symbols into their integer representation
+ * @param sym The com.teddyheinen.symbol to be converted
+ * @param labels A mapping of label <-> line number
+ * @param variables A mapping of variables to their memory locations
+ * @return The integer which the com.teddyheinen.symbol corresponds to
+ */
 fun symbol(sym: String, labels: Map<String, Int>, variables: MutableMap<String, Int>): String {
 
     if ((sym.toIntOrNull() == null)) {
@@ -156,6 +163,12 @@ fun symbol(sym: String, labels: Map<String, Int>, variables: MutableMap<String, 
     return sym.toIntOrNull().toString()
 }
 
+
+/**
+ * Converts com.teddyheinen.comp instructions into their binary representation
+ * @param comp Comp instruction such as D+1 or M-D
+ * @return Binary representation of the instruction
+ */
 fun comp(comp: String): String {
 
     // first char is A bit, determines a/m
@@ -189,6 +202,6 @@ fun comp(comp: String): String {
         "d&m" -> "1000000"
         "d|a" -> "0010101"
         "d|m" -> "1010101"
-        else -> throw Exception("${comp} is not a valid comp instruction")
+        else -> throw Exception("${comp} is not a valid com.teddyheinen.comp instruction")
     }
 }
