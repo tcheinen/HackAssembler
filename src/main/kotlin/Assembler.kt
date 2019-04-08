@@ -1,10 +1,8 @@
 import java.io.File
 
-val variables: MutableMap<String, Int> = mutableMapOf()
 
 fun main(args: Array<String>) {
     File("asm/").walkTopDown().filter { it.extension == "asm" }.forEach {
-        variables.clear()
         val generatedCode: String = assemble(it)
         val out: File = File("asm/${it.nameWithoutExtension}.hack")
         out.writeText(generatedCode)
@@ -79,29 +77,30 @@ fun labelize(code: List<String>): Pair<List<String>, Map<String, Int>> {
 
 fun processInstructions(code: List<String>, labels: Map<String, Int>): List<String> {
     val code_1: MutableList<String> = mutableListOf()
+    val variables: MutableMap<String, Int> = mutableMapOf()
 
     for (i in code) {
         var instruction = ""
         if (i.get(0) == "@".single()) {
             // A Instruction
-            val num = (symbol(i.slice(1..i.length - 1), labels).toInt() and 0x7fff).toString(2)
+            val num = (symbol(i.slice(1..i.length - 1), labels, variables).toInt() and 0x7fff).toString(2)
             instruction = "0${num.padStart(15, "0".single())}"
         } else {
             // C Instruction
-            val (dest, cmp, jmp) = splitCInstruction(i.toLowerCase())
+            val (dest, comp, jmp) = splitCInstruction(i.toLowerCase())
 
             val destA = dest.contains("a")
             val destD = dest.contains("d")
             val destM = dest.contains("m")
             val destBinary = listOf<Boolean>(destA, destD, destM).map { if (it) "1" else "0" }.joinToString("")
 
-            val cmpBinary = cmpArray()[cmp]
+            val compBinary = comp(comp)
 
             val jmpEq = jmp == "jeq" || jmp == "jge" || jmp == "jle" || jmp == "jmp"
             val jmpLt = jmp == "jlt" || jmp == "jne" || jmp == "jle" || jmp == "jmp"
             val jmpGt = jmp == "jgt" || jmp == "jge" || jmp == "jne" || jmp == "jmp"
             val jmpBinary = listOf<Boolean>(jmpLt, jmpEq, jmpGt).map { if (it) "1" else "0" }.joinToString("")
-            instruction = "111${cmpBinary}${destBinary}${jmpBinary}"
+            instruction = "111${compBinary}${destBinary}${jmpBinary}"
         }
         code_1.add(instruction)
     }
@@ -129,7 +128,8 @@ fun splitCInstruction(instr: String): List<String> {
     return listOf(dest, cmp, jmp)
 }
 
-fun symbol(sym: String, labels: Map<String, Int>): String {
+fun symbol(sym: String, labels: Map<String, Int>, variables: MutableMap<String, Int>): String {
+
     if ((sym.toIntOrNull() == null)) {
         if (sym.get(0) == "R".single() && sym.slice(1..sym.length - 1).toIntOrNull() != null) {
             return "${sym.slice(1..sym.length - 1)}"
@@ -156,40 +156,39 @@ fun symbol(sym: String, labels: Map<String, Int>): String {
     return sym.toIntOrNull().toString()
 }
 
-fun cmpArray(): Map<String, String> {
-    // i hate this
-    val cmp: MutableMap<String, String> = mutableMapOf()
+fun comp(comp: String): String {
 
     // first char is A bit, determines a/m
 
-    cmp["0"] = "0101010"
-    cmp["1"] = "0111111"
-    cmp["-1"] = "0111010"
-    cmp["d"] = "0001100"
-    cmp["a"] = "0110000"
-    cmp["m"] = "1110000"
-    cmp["!d"] = "0001101"
-    cmp["!a"] = "0110001"
-    cmp["!m"] = "1110001"
-    cmp["-d"] = "0001111"
-    cmp["-a"] = "0110011"
-    cmp["-m"] = "1110011"
-    cmp["d+1"] = "0011111"
-    cmp["a+1"] = "0110111"
-    cmp["m+1"] = "1110111"
-    cmp["d-1"] = "0001110"
-    cmp["a-1"] = "0110010"
-    cmp["m-1"] = "1110010"
-    cmp["d+a"] = "0000010"
-    cmp["d+m"] = "1000010"
-    cmp["d-a"] = "0010011"
-    cmp["d-m"] = "1010011"
-    cmp["a-d"] = "0000111"
-    cmp["m-d"] = "1000111"
-    cmp["d&a"] = "0000000"
-    cmp["d&m"] = "1000000"
-    cmp["d|a"] = "0010101"
-    cmp["d|m"] = "1010101"
-
-    return cmp
+    return when (comp) {
+        "0" -> "0101010"
+        "1" -> "0111111"
+        "-1" -> "0111010"
+        "d" -> "0001100"
+        "a" -> "0110000"
+        "m" -> "1110000"
+        "!d" -> "0001101"
+        "!a" -> "0110001"
+        "!m" -> "1110001"
+        "-d" -> "0001111"
+        "-a" -> "0110011"
+        "-m" -> "1110011"
+        "d+1" -> "0011111"
+        "a+1" -> "0110111"
+        "m+1" -> "1110111"
+        "d-1" -> "0001110"
+        "a-1" -> "0110010"
+        "m-1" -> "1110010"
+        "d+a" -> "0000010"
+        "d+m" -> "1000010"
+        "d-a" -> "0010011"
+        "d-m" -> "1010011"
+        "a-d" -> "0000111"
+        "m-d" -> "1000111"
+        "d&a" -> "0000000"
+        "d&m" -> "1000000"
+        "d|a" -> "0010101"
+        "d|m" -> "1010101"
+        else -> throw Exception("${comp} is not a valid comp instruction")
+    }
 }
