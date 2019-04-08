@@ -4,29 +4,46 @@ import java.io.File
 
 
 fun main(args: Array<String>) {
-    File("asm/").walkTopDown().filter { it.extension == "asm" }.forEach {
-        println("Assembling ${it.name}")
-        val (generatedCode: List<String>, debugASM: List<String>) = assemble(it)
-        File("asm/${it.nameWithoutExtension}.hack").writeText(generatedCode.joinToString("\n"))
-
-        // Everything in the main function below this point is automated testing code
-        val reference = File("asm/${it.nameWithoutExtension}_reference.hack").readLines()
-        if (reference.size == generatedCode.size) {
-            reference.forEachIndexed { index, line ->
-                if (reference[index] != generatedCode[index]) {
-                    val debugLines: List<String> = (-3..3).map { debugASM[index + it] }
-                    throw Exception(
-                        "Reference and generated code different at line ${index}\nLine in ASM: ${debugASM[index]} \n${debugLines.joinToString(
-                            "\n"
-                        )}"
-                    )
-                }
-            }
-        } else {
-            throw Exception("Length of reference and generated code not the same for ${it.nameWithoutExtension}")
+    val toBeAssembled: MutableList<String> = mutableListOf()
+    if (args.size > 0) {
+        args.forEach { toBeAssembled.add(it) }
+    } else {
+        File("asm/").walkTopDown().filter { it.extension == "asm" }.forEach {
+            toBeAssembled.add(it.absolutePath)
         }
     }
 
+    toBeAssembled.forEach {
+        val f: File = File(it)
+        println("Assembling ${f.name}")
+        val (generatedCode: List<String>, debugASM: List<String>) = assemble(f)
+        compare("asm/${f.nameWithoutExtension}.hack", debugASM)
+    }
+
+}
+
+
+/**
+ * Compares a compiled hack file to the reference file
+ * @param filename path to the compiled hack file
+ * @param debugASM cleaned ASM, used to be able to print out the ASM around an error
+ */
+fun compare(filename: String, debugASM: List<String>) {
+    val f = File(filename)
+    println("Comparing ${f.nameWithoutExtension} with reference")
+    val generatedCode = f.readLines()
+    val reference = File("asm/${f.nameWithoutExtension}_reference.hack").readLines()
+
+    if (reference.size != generatedCode.size)
+        throw Exception("Length of reference and generated code not the same for ${f.nameWithoutExtension}")
+    reference.forEachIndexed { index, line ->
+        if (reference[index] != generatedCode[index]) {
+            val debugLines: String = (-3..3).map { debugASM[index + it] }.joinToString("\n")
+            val errorText =
+                "Reference and generated code different at line ${index}\nLine in ASM: ${debugASM[index]} \n${debugLines}"
+            throw Exception(errorText)
+        }
+    }
 }
 
 /**
