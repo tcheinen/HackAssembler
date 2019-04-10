@@ -5,7 +5,7 @@ import java.io.File
 
 fun main(args: Array<String>) {
     val toBeAssembled: MutableList<String> = mutableListOf()
-    if (args.size > 0) {
+    if (args.isNotEmpty()) {
         args.forEach { toBeAssembled.add(it) }
     } else {
         File("asm/").walkTopDown().filter { it.extension == "asm" }.forEach {
@@ -14,9 +14,11 @@ fun main(args: Array<String>) {
     }
 
     toBeAssembled.forEach {
-        val f: File = File(it)
+        val f = File(it)
         println("Assembling ${f.name}")
         val (generatedCode: List<String>, debugASM: List<String>) = assemble(f)
+        val out = File("asm/${f.nameWithoutExtension}.hack")
+        out.writeText(generatedCode.joinToString("\n"))
         compare("asm/${f.nameWithoutExtension}.hack", debugASM)
     }
 
@@ -36,11 +38,11 @@ fun compare(filename: String, debugASM: List<String>) {
 
     if (reference.size != generatedCode.size)
         throw Exception("Length of reference and generated code not the same for ${f.nameWithoutExtension}")
-    reference.forEachIndexed { index, line ->
+    reference.forEachIndexed { index, _ ->
         if (reference[index] != generatedCode[index]) {
-            val debugLines: String = (-3..3).map { debugASM[index + it] }.joinToString("\n")
+            val debugLines: String = (-3..3).joinToString("\n") { debugASM[index + it] }
             val errorText =
-                "Reference and generated code different at line ${index}\nLine in ASM: ${debugASM[index]} \n${debugLines}"
+                "Reference and generated code different at line $index\nLine in ASM: ${debugASM[index]} \n$debugLines"
             throw Exception(errorText)
         }
     }
@@ -52,10 +54,9 @@ fun compare(filename: String, debugASM: List<String>) {
  * @return Hack ASM lines with any whitespace or comments removed
  */
 fun clean(f: List<String>): List<String> {
-    val commentRegex = "\\/\\/.*\$".toRegex()
+    val commentRegex = "(//.*\$)|(\\s)".toRegex()
 
-    return f.map { it.replace(commentRegex, "") }.map { it.replace("\\s".toRegex(), "") }
-        .filter { !it.equals("") }
+    return f.map { it.replace(commentRegex, "") }.filter { it != "" }
 
 }
 
@@ -88,18 +89,18 @@ fun labelize(code: List<String>): Pair<List<String>, Map<String, Int>> {
     val labelRegex = "\\(.*\\)".toRegex()
     val labels: MutableMap<String, Int> = mutableMapOf()
 
-    val code_1: MutableList<String> = mutableListOf()
+    val output: MutableList<String> = mutableListOf()
     var counter = 0
     for (i in code) {
         val match = labelRegex.find(i)
-        if (!(match == null)) {
-            labels.put(match?.groupValues?.first().slice(1..i.length - 2), counter)
+        if (match != null) {
+            labels[match.groupValues.first().slice(1..i.length - 2)] = counter
             continue
         }
-        code_1.add(i)
+        output.add(i)
         counter++
     }
-    return Pair(code_1, labels)
+    return Pair(output, labels)
 }
 
 /**
@@ -121,15 +122,14 @@ fun processInstructions(code: List<String>, labels: Map<String, Int>): List<Stri
      * to map comp instructions to the appropriate bitstrings
      */
 
-    val code_1: MutableList<String> = mutableListOf()
+    val output: MutableList<String> = mutableListOf()
     val variables: MutableMap<String, Int> = mutableMapOf()
 
     for (i in code) {
-        var instruction = ""
-        if (i.get(0) == "@".single()) {
+        val instruction = if (i[0] == "@".single()) {
             // A Instruction
-            val num = symbol(i.slice(1..i.length - 1), labels, variables).toInt().toString(2)
-            instruction = "0${num.padStart(15, "0".single())}"
+            val num = symbol(i.slice(1 until i.length), labels, variables).toInt().toString(2)
+            "0${num.padStart(15, "0".single())}"
         } else {
             // C Instruction
             val instr = i.toLowerCase()
@@ -144,19 +144,19 @@ fun processInstructions(code: List<String>, labels: Map<String, Int>): List<Stri
             val destA = dest.contains("a")
             val destD = dest.contains("d")
             val destM = dest.contains("m")
-            val destBinary = listOf<Boolean>(destA, destD, destM).map { if (it) "1" else "0" }.joinToString("")
+            val destBinary = listOf(destA, destD, destM).joinToString("") { if (it) "1" else "0" }
 
             val compBinary = comp(comp)
 
             val jmpEq = jmp == "jeq" || jmp == "jge" || jmp == "jle" || jmp == "jmp"
             val jmpLt = jmp == "jlt" || jmp == "jne" || jmp == "jle" || jmp == "jmp"
             val jmpGt = jmp == "jgt" || jmp == "jge" || jmp == "jne" || jmp == "jmp"
-            val jmpBinary = listOf<Boolean>(jmpLt, jmpEq, jmpGt).map { if (it) "1" else "0" }.joinToString("")
-            instruction = "111${compBinary}${destBinary}${jmpBinary}"
+            val jmpBinary = listOf(jmpLt, jmpEq, jmpGt).joinToString("") { if (it) "1" else "0" }
+            "111$compBinary$destBinary$jmpBinary"
         }
-        code_1.add(instruction)
+        output.add(instruction)
     }
-    return code_1
+    return output
 }
 
 
@@ -181,10 +181,10 @@ fun symbol(sym: String, labels: Map<String, Int>, variables: MutableMap<String, 
 
     if ((sym.toIntOrNull() != null)) return sym.toIntOrNull().toString()
 
-    if (sym.get(0) == "R".single()) {
-        val remainder = sym.slice(1..sym.length - 1)
+    if (sym[0] == "R".single()) {
+        val remainder = sym.slice(1 until sym.length)
         if (remainder.toIntOrNull() != null && remainder.toInt() in 0..17) {
-            return "${sym.slice(1..sym.length - 1)}"
+            return sym.slice(1 until sym.length)
         }
     }
 
@@ -200,11 +200,11 @@ fun symbol(sym: String, labels: Map<String, Int>, variables: MutableMap<String, 
     }
     if (constant != null) return constant
 
-    if (labels.get(sym) != null) {
-        return labels.get(sym)!!.toString()
+    return if (labels[sym] != null) {
+        labels.getValue(sym).toString()
     } else {
-        if (sym !in variables) variables.put(sym, 16 + variables.size)
-        return "${variables.get(sym)}"
+        if (sym !in variables) variables[sym] = 16 + variables.size
+        "${variables[sym]}"
     }
 
 }
@@ -248,6 +248,6 @@ fun comp(comp: String): String {
         "d&m" -> "1000000"
         "d|a" -> "0010101"
         "d|m" -> "1010101"
-        else -> throw Exception("${comp} is not a valid comp instruction")
+        else -> throw Exception("$comp is not a valid comp instruction")
     }
 }
